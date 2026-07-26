@@ -1,0 +1,61 @@
+---
+title: 接口能力说明
+description: 画布支持的 API 接口格式和功能
+---
+
+# 接口能力说明
+
+本项目兼容 OpenAI 格式的 API 接口，支持以下功能：
+
+## 支持的接口
+
+| 功能 | 接口路径 | 说明 |
+|------|----------|------|
+| 文生图 | `POST /v1/images/generations` | 根据文本提示生成图片 |
+| 图生图 | `POST /v1/images/edits` | 基于参考图和提示词编辑/生成图片 |
+| 视频生成 | `POST /v1/videos` | 文本生成视频（异步任务，轮询结果） |
+| 音频合成 | `POST /v1/audio/speech` | 文本转语音（TTS） |
+| 文本对话 | `POST /v1/chat/completions` | 文本生成和对话 |
+| 模型列表 | `GET /v1/models` | 获取可用模型列表 |
+
+## 支持的 API 格式
+
+| 格式 | 适用模型 | 说明 |
+|------|----------|------|
+| OpenAI | GPT、DALL-E、Whisper 等 | 默认格式，兼容大多数中转站 |
+| Gemini | Google Gemini 系列 | 原生 Gemini API 格式 |
+| Seedance | 字节跳动 Seedance 视频模型 | 支持参考图、参考视频、参考音频 |
+
+## 默认模型配置
+
+| 类型 | 默认模型 | 能力 |
+|------|----------|------|
+| 图片 | gpt-image-2 | 文生图、图生图 |
+| 视频 | grok-imagine-video | 文本生成视频 |
+| 文本 | gpt-5.5 | 文本生成、对话 |
+| 音频 | gpt-4o-mini-tts | 文本转语音 |
+
+## 接口地址
+
+默认接口地址：`https://api.zhangyuapi.com`
+
+如需使用其他兼容接口，在画布配置界面修改 Base URL 和 API Key 即可。
+
+## 请求格式
+
+所有请求均使用标准 OpenAI 格式：
+
+```
+Authorization: Bearer <API_KEY>
+Content-Type: application/json
+```
+
+## 兼容的第三方服务
+
+以下服务均支持 OpenAI 格式，可直接使用：
+
+- OpenAI 官方 API
+- Azure OpenAI
+- Claude（通过兼容层）
+- 各类 OpenAI 中转站
+- 自建 vLLM、Ollama 等服务

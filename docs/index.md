@@ -5,6 +5,7 @@
 - [快速开始](/docs/overview/quick-start)
 - [功能介绍](/docs/overview/features)
 - [Docker 部署](/docs/overview/docker)
+- [接口能力说明](/docs/overview/api-capabilities)
 
 ## 操作手册
 
