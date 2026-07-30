@@ -75,7 +75,7 @@ export const defaultConfig: AiConfig = {
         {
             id: "default",
             name: "默认渠道",
-            baseUrl: "https://api.zhangyuapi.com",
+            baseUrl: OPENAI_BASE_URL,
             apiKey: "",
             apiFormat: "openai",
             models: [
