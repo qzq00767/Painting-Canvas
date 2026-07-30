@@ -66,7 +66,7 @@ type AgentThreadsResponse = { ok?: boolean; workspace?: AgentWorkspace; data?: A
 type AgentThreadResponse = { ok?: boolean; workspace?: AgentWorkspace; thread?: AgentThreadSummary; messages?: AgentChatItem[] };
 type AgentCodexState = { busy?: boolean; threadId?: string; turnId?: string };
 type AgentHelloEvent = { ok?: boolean; clientId?: string; codex?: AgentCodexState };
-type AgentWorkspaceEvent = { activeThreadId?: string; threadId?: string; emptyThread?: boolean };
+type AgentWorkspaceEvent = { activeThreadId?: string; threadId?: string; emptyThread?: boolean; draftThread?: boolean };
 type AgentChatEvent = { threadId?: string; sourceClientId?: string; message?: AgentChatItem };
 
 export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?: boolean; headless?: boolean; autoConnect?: boolean }) {
@@ -119,6 +119,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     const attachmentUrlsRef = useRef(new Set<string>());
     const clientIdRef = useRef(randomId());
     const loadThreadsSequenceRef = useRef(0);
+    const resetThreadRef = useRef<Promise<unknown> | null>(null);
     const endpoint = useMemo(() => url.trim().replace(/\/$/, ""), [url]);
     const urlAgentAutoConnect = searchParams.has("agentUrl") && searchParams.has("agentToken");
     const loadThreads = useCallback(async (skipHistory = false) => {
@@ -226,7 +227,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 const keepPendingMessage = Boolean(data.emptyThread && current.sending && current.activeThreadId === nextThreadId);
                 pendingToolRef.current = null;
                 setAgentState({ activeThreadId: nextThreadId, ...(keepPendingMessage ? {} : { messages: [] }), tokenUsage: null, pendingTool: null, pendingApprovals: [] });
-                await loadThreads(Boolean(data.emptyThread));
+                if (!data.draftThread) await loadThreads(Boolean(data.emptyThread));
             });
         });
         source.addEventListener("chat_message", (event) => {
@@ -298,18 +299,19 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             addMessage({ role: "error", title: "图片过大", text: "图片附件超过 30MB，请删减后再发送。" });
             return;
         }
-        setAgentState({ activity: "发送中", sending: true });
         const messageId = createId();
         const userText = text || `发送了 ${files.length} 张图片`;
+        setAgentState({ prompt: "", attachments: [], activity: "发送中", sending: true });
+        addMessage({ id: messageId, role: "user", text: userText, historyText: requestPrompt, attachments: files });
         let threadId = useAgentStore.getState().activeThreadId;
         try {
+            await resetThreadRef.current;
             if (!threadId) {
                 const created = await fetchAgentJson<AgentThreadResponse>(endpoint, token, "/agent/codex/threads/new", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ permissionMode }) });
                 threadId = created.thread?.id || created.workspace?.activeThreadId || "";
                 if (!threadId) throw new Error("新建对话失败");
-                setAgentState({ activeThreadId: threadId, messages: [], tokenUsage: null });
+                setAgentState({ activeThreadId: threadId, tokenUsage: null });
             }
-            addMessage({ id: messageId, role: "user", text: userText, historyText: requestPrompt, attachments: files });
             if (files.length) void saveAgentUserMessage(threadId, { id: messageId, role: "user", text: userText, historyText: requestPrompt, attachments: files }).catch(() => undefined);
             addEventLog("发送任务", `${compactText(text) || "仅附件"}${files.length ? ` · 附件 ${files.length}` : ""}`);
             const data = await fetchAgentJson<{ threadId?: string }>(endpoint, token, "/agent/codex/turn", {
@@ -330,11 +332,15 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 URL.revokeObjectURL(item.url);
                 attachmentUrlsRef.current.delete(item.url);
             });
-            setAgentState({ prompt: "", attachments: [], sending: false, waiting: true, activity: "Codex 正在运行" });
+            setAgentState({ sending: false, waiting: true, activity: "Codex 正在运行" });
         } catch (error) {
             const text = error instanceof Error ? error.message : "发送失败";
             const busy = text.includes("Codex 正在运行");
-            setAgentState({ activity: busy ? "Codex 正在运行" : "发送失败" });
+            const state = useAgentStore.getState();
+            setAgentState({
+                activity: busy ? "Codex 正在运行" : "发送失败",
+                ...(state.prompt || state.attachments.length ? {} : { prompt, attachments: files }),
+            });
             addMessage({ role: "error", title: busy ? "任务仍在运行" : "发送失败", text });
             addEventLog("发送失败", error);
         } finally {
@@ -572,18 +578,19 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         pendingToolRef.current = null;
     }
 
-    const startNewThread = async () => {
+    const startNewThread = () => {
         if (!connected || sending || waiting) return;
-        setAgentState({ loadingThreads: true });
-        try {
-            const data = await fetchAgentJson<AgentThreadResponse>(endpoint, token, "/agent/codex/threads/new", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ permissionMode }) });
-            setAgentState({ activeThreadId: data.thread?.id || data.workspace?.activeThreadId || "", messages: [], tokenUsage: null, activeTab: "chat", activity: "新对话" });
-        } catch (error) {
+        setAgentState({ activeThreadId: "", messages: [], tokenUsage: null, activeTab: "chat", activity: "新对话", pendingTool: null, pendingApprovals: [] });
+        pendingToolRef.current = null;
+        const request = fetchAgentJson(endpoint, token, "/agent/codex/threads/reset", { method: "POST" }).catch((error) => {
             addEventLog("新建对话失败", error);
             message.error(error instanceof Error ? error.message : "新建对话失败");
-        } finally {
-            setAgentState({ loadingThreads: false });
-        }
+            throw error;
+        });
+        resetThreadRef.current = request;
+        void request.finally(() => {
+            if (resetThreadRef.current === request) resetThreadRef.current = null;
+        }).catch(() => undefined);
     };
 
     const resumeThread = async (threadId: string) => {
