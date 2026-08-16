@@ -26,3 +26,5 @@ OPENAI_BASE_URL=https://api.zhangyuapi.com
 | `.github/workflows/docs-docker-image.yml` | `ghcr.io/qzq00767/painting-canvas-docs` |
 | `docker-compose.yml` | `ghcr.io/qzq00767/painting-canvas:latest` |
 | `docs/docker-compose.yml` | `ghcr.io/qzq00767/painting-canvas-docs:latest` |
+
+两个 Docker 工作流都应在 `main` 更新时运行并发布 `latest` 标签，确保容器强制拉取后获得最新代码。
