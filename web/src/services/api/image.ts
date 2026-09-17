@@ -7,6 +7,7 @@ import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
+import { imageSizePresets, inferMediaScale } from "@/lib/media-size";
 import type { ReferenceImage } from "@/types/image";
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
@@ -115,6 +116,8 @@ const IMAGE_MAX_PIXELS = 8294400;
 const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
+// 与 image-storage 的下载超时保持一致，避免接口挂起时节点一直停在生成中。
+const IMAGE_REQUEST_TIMEOUT_MS = 10 * 60_000;
 
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 const GEMINI_IMAGE_SIZE_BY_QUALITY: Record<string, string> = { low: "1K", medium: "2K", high: "4K", standard: "1K", hd: "2K" };
@@ -133,6 +136,9 @@ function normalizeBackground(background: string | undefined) {
 /** Map "quality + ratio" to an explicit pixel dimension like "3840x2160". */
 function resolveSize(quality: string | undefined, ratio: string): string {
     const parsedRatio = parseImageRatio(ratio);
+    const scale = quality === "high" ? "4k" : quality === "medium" || quality === "hd" ? "2k" : "1k";
+    const preset = imageSizePresets[scale][ratio];
+    if (preset) return preset;
     const basePixels = quality ? QUALITY_BASE[quality] : undefined;
     const isLandscape = parsedRatio.width >= parsedRatio.height;
     const longRatio = isLandscape ? parsedRatio.width / parsedRatio.height : parsedRatio.height / parsedRatio.width;
@@ -221,6 +227,9 @@ function resolveGeminiImageSize(quality: string, dimensions: { width: number; he
     const normalizedQuality = normalizeQuality(quality);
     if (normalizedQuality) return GEMINI_IMAGE_SIZE_BY_QUALITY[normalizedQuality];
     if (!dimensions) return undefined;
+    const size = `${dimensions.width}x${dimensions.height}`;
+    const scale = inferMediaScale(size);
+    if (Object.values(imageSizePresets[scale]).includes(size)) return scale.toUpperCase();
     const edge = Math.max(dimensions.width, dimensions.height);
     if (edge <= 768) return "512";
     if (edge <= 1536) return "1K";
@@ -303,6 +312,7 @@ function readApiErrorMessage(value: unknown): string {
 function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return apiText("requestCanceled");
     if (axios.isAxiosError(error)) {
+        if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") return apiText("imageTimeout");
         if (!error.response && error.code === "ERR_NETWORK") return apiText("requestFailed");
         const responseData = error.response?.data;
         // Prefer the API error from the response body.
@@ -692,7 +702,7 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
             ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...resolveGeminiImageConfig(config) } }),
             contents: [{ role: "user", parts }],
         },
-        { headers: geminiHeaders(config), signal: options?.signal },
+        { headers: geminiHeaders(config), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS },
     );
     return parseGeminiImagePayload(response.data);
 }
@@ -763,6 +773,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             {
                 headers: aiHeaders(requestConfig, "application/json"),
                 signal: options?.signal,
+                timeout: IMAGE_REQUEST_TIMEOUT_MS,
             },
         );
         const images = await parseImagePayload(response.data);
@@ -831,7 +842,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     files.forEach((file) => formData.append(imageField, file));
 
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal });
+        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS });
         const images = await parseImagePayload(response.data);
         return images;
     } catch (error) {
